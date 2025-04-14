@@ -1,27 +1,38 @@
-# Lista completa de pacotes, incluindo os que deram erro
+# Lista de pacotes
 packages <- c("shiny", "glmnet", "corrplot", "ggcorrplot", "factoextra", 
               "Matrix", "MatrixModels", "quantreg", "car", "FactoMineR")
 
-# Força a atualização do pacote Matrix
+# Atualiza Matrix com dependências antes de tudo
+cat("Forçando atualização de 'Matrix'...\n")
 install.packages("Matrix", dependencies = TRUE)
 
-# Instala os demais pacotes
-for (pkg in packages) {
+# Função para instalar e carregar pacotes
+install_and_load <- function(pkg) {
   if (!require(pkg, character.only = TRUE)) {
     cat("Instalando", pkg, "...\n")
-    install.packages(pkg)
+    tryCatch({
+      install.packages(pkg, dependencies = TRUE)
+      if (require(pkg, character.only = TRUE)) {
+        cat(pkg, "foi instalado e carregado com sucesso.\n")
+      } else {
+        cat("Erro ao carregar", pkg, "após a instalação.\n")
+      }
+    }, error = function(e) {
+      cat("Falha ao instalar o pacote", pkg, ":", conditionMessage(e), "\n")
+    })
   } else {
-    cat(pkg, "já está instalado.\n")
+    cat(pkg, "já está instalado e carregado.\n")
   }
 }
 
-# Carregar bibliotecas
-library(shiny)
-library(glmnet)
-library(corrplot)
-library(ggcorrplot)
-library(FactoMineR)
-library(factoextra)
+# Instala e carrega todos os pacotes
+for (pkg in packages) {
+  install_and_load(pkg)
+}
+
+# Confirmação final
+cat("\nTodos os pacotes foram processados.\n")
+
 
 # =============================
 # Funções Gerais e Módulos
