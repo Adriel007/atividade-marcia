@@ -1,6 +1,6 @@
 # Lista de pacotes
 packages <- c("shiny", "glmnet", "corrplot", "ggcorrplot", "factoextra", 
-              "Matrix", "MatrixModels", "quantreg", "car", "FactoMineR", "rmarkdown")
+              "Matrix", "MatrixModels", "quantreg", "car", "FactoMineR", "base64enc")
 
 # Atualiza Matrix com dependências antes de tudo
 cat("Forçando atualização de 'Matrix'...\n")
@@ -32,6 +32,34 @@ for (pkg in packages) {
 
 # Confirmação final
 cat("\nTodos os pacotes foram processados.\n")
+
+# Função para converter plots em base64
+plot_to_base64 <- function(plot_func) {
+  tmp <- tempfile(fileext = ".png")
+  png(tmp, width = 800, height = 600)
+  print(plot_func())
+  dev.off()
+  base64enc::dataURI(file = tmp, mime = "image/png")
+}
+
+# Função para gerar HTML
+generate_html_report <- function(content, plots = list()) {
+  html <- "<html><body style='padding: 20px; font-family: Arial;'>"
+  
+  # Conteúdo textual
+  if (!is.null(content)) {
+    html <- paste0(html, "<pre>", paste(content, collapse = "\n"), "</pre>")
+  }
+  
+  # Plots
+  if (length(plots) > 0) {
+    for (plot in plots) {
+      html <- paste0(html, "<img src='", plot, "' style='max-width: 90%; margin: 20px;'/>")
+    }
+  }
+  
+  paste0(html, "</body></html>")
+}
 
 
 # =============================
@@ -136,6 +164,46 @@ analise_num <- function(df, col_name) {
   
   # Retorna o sumário para uso posterior, se necessário
   return(sumario)
+}
+
+# -----------
+# Módulo: Análise Descritiva Avançada
+# -----------
+
+analise_descritiva_avancada <- function(df, var) {
+  if(is.numeric(df[[var]])) {
+    # Para variáveis quantitativas
+    hist <- hist(df[[var]], main = paste("Histograma de", var), 
+                 xlab = var, ylab = "Frequência", 
+                 col = "skyblue", border = "black", breaks = 15, freq = FALSE)
+    
+    lines(density(df[[var]], na.rm = TRUE), col = "darkgreen", lwd = 2)
+    abline(v = mean(df[[var]], na.rm = TRUE), col = "red", lwd = 2, lty = 2)
+    abline(v = median(df[[var]], na.rm = TRUE), col = "blue", lwd = 2, lty = 2)
+    legend("topright", legend = c("Densidade", "Média", "Mediana"),
+           col = c("darkgreen", "red", "blue"), lty = c(1, 2, 2), lwd = 2)
+    
+    list(
+      sumario = summary(df[[var]]),
+      histograma = hist
+    )
+    
+  } else {
+    # Para variáveis qualitativas
+    tab <- table(df[[var]])
+    tab_prop <- prop.table(tab)
+    tab_acum <- cumsum(tab_prop)
+    
+    barplot(tab, main = paste("Distribuição de", var),
+            col = "lightgreen", las = 2)
+    
+    list(
+      tabela = cbind(Frequência = tab, 
+                     Porcentagem = round(tab_prop*100, 2),
+                     Acumulada = round(tab_acum*100, 2)),
+      sumario = summary(df[[var]])
+    )
+  }
 }
 
 # Função para executar a análise completa no dataset
@@ -349,48 +417,62 @@ ui <- fluidPage(
         tabPanel("Frequências",
                  selectInput("freq_var", "Selecionar Variável", choices = NULL),
                  verbatimTextOutput("freq_table"),
-                 plotOutput("freq_plot")),
-        tabPanel("Dicionário", tableOutput("dicionario")),
+                 plotOutput("freq_plot"),
+                 downloadButton("download_freq", "Download Frequências") # Novo
+        ),
+        tabPanel("Análise Descritiva",
+                 selectInput("desc_var", "Selecionar Variável", choices = NULL),
+                 verbatimTextOutput("desc_sumario"),
+                 plotOutput("desc_plot"),
+                 tableOutput("desc_tabela"),
+                 downloadButton("download_desc", "Download Descritiva") # Novo
+        ),
+        tabPanel("Dicionário", 
+                 tableOutput("dicionario"),
+                 downloadButton("download_dict", "Download Dicionário") # Novo
+        ),
         tabPanel("Análise Univariada",
                  verbatimTextOutput("analise_univariada"),
-                 plotOutput("grafico_univariado")),
-        tabPanel("Tabela Cruzada", verbatimTextOutput("tabela_cruzada")),
+                 plotOutput("grafico_univariado"),
+                 downloadButton("download_univariada", "Download Univariada") # Novo
+        ),
+        tabPanel("Tabela Cruzada", 
+                 verbatimTextOutput("tabela_cruzada"),
+                 downloadButton("download_cruzada", "Download Tabela") # Novo
+        ),
         tabPanel("Modelos",
-                 selectInput("resp_var", "Variável Resposta (Binária)", choices = NULL),
-                 selectizeInput("pred_vars", "Variáveis Preditivas", choices = NULL, multiple = TRUE),
                  verbatimTextOutput("modelo_summary"),
-                 verbatimTextOutput("modelo_metrics")),
+                 verbatimTextOutput("modelo_metrics"),
+                 downloadButton("download_modelo", "Download Modelo") # Novo
+        ),
         tabPanel("Correlação", 
                  uiOutput("cor_vars_ui"),
-                 plotOutput("cor_plot1")),
+                 plotOutput("cor_plot1"),
+                 downloadButton("download_cor", "Download Correlação") # Novo
+        ),
         tabPanel("Boxplot Multivariado",
-                 selectInput("box_y", "Variável Numérica", choices = NULL),
-                 selectInput("box_x1", "Categórica 1", choices = NULL),
-                 selectInput("box_x2", "Categórica 2", choices = NULL),
-                 plotOutput("boxplot_multi")),
+                 plotOutput("boxplot_multi"),
+                 downloadButton("download_boxplot", "Download Boxplot") # Novo
+        ),
         tabPanel("Associação Categórica",
-                 selectInput("assoc1", "Categórica A", choices = NULL),
-                 selectInput("assoc2", "Categórica B", choices = NULL),
-                 verbatimTextOutput("assoc_result")),
+                 verbatimTextOutput("assoc_result"),
+                 downloadButton("download_assoc", "Download Associação") # Novo
+        ),
         tabPanel("MCA",
-                 uiOutput("mca_vars_ui"),
-                 plotOutput("mca_plot")),
+                 plotOutput("mca_plot"),
+                 downloadButton("download_mca", "Download MCA") # Novo
+        ),
         tabPanel("Ratios e VIF",
                  verbatimTextOutput("ratios_vif_text"),
                  fluidRow(
                    column(4, plotOutput("hist_col_hdl")),
-                   column(4, plotOutput("hist_ldl_hdl")),
-                   column(4, plotOutput("hist_trig_hdl"))
+                   downloadButton("download_ratios", "Download Ratios/VIF") # Novo
                  )
         )
-        
-        
-        
-      ),
-      downloadButton("download_report", "Download Relatório Consolidado")
+      )
     )
   )
-)
+  )
 
 server <- function(input, output, session) {
   
@@ -408,10 +490,37 @@ server <- function(input, output, session) {
     modified_df(df_original())
   })
   
+  # Atualizar seleção de variáveis descritivas
+  observeEvent(modified_df(), {
+    updateSelectInput(session, "desc_var", choices = names(modified_df()))
+  })
+  
+  # Lógica da análise descritiva
+  output$desc_sumario <- renderPrint({
+    req(input$desc_var)
+    res <- analise_descritiva_avancada(modified_df(), input$desc_var)
+    cat("=== Sumário Estatístico ===\n")
+    print(res$sumario)
+  })
+  
+  output$desc_plot <- renderPlot({
+    req(input$desc_var)
+    analise_descritiva_avancada(modified_df(), input$desc_var)
+  })
+  
+  output$desc_tabela <- renderTable({
+    req(input$desc_var)
+    if(!is.numeric(modified_df()[[input$desc_var]])) {
+      res <- analise_descritiva_avancada(modified_df(), input$desc_var)
+      res$tabela
+    }
+  }, rownames = TRUE)
+  
   # Atualizar seleções de variáveis
   observeEvent(modified_df(), {
     df <- modified_df()
     cols <- names(df)
+    updateSelectInput(session, "desc_var", choices = cols)
     
     # Atualizar todas as seleções
     updateSelectInput(session, "var", choices = cols)
@@ -610,90 +719,153 @@ server <- function(input, output, session) {
     }
   })
   
-  rel_dicionario <- reactive({
-    capture.output(dicionario_variaveis(modified_df()))
-  })
   
-  rel_analise_univariada <- reactive({
-    req(input$var)
-    capture.output({
-      if(is.numeric(modified_df()[[input$var]])) {
-        analise_num(modified_df(), input$var)
-      } else {
-        analise_categ(modified_df(), input$var)
-      }
-    })
-  })
+  # ========== HANDLERS DE DOWNLOAD ==========
   
-  rel_tabela_cruzada <- reactive({
-    req(input$var1, input$var2, input$var3)
-    tryCatch({
-      capture.output(tabela_cruzada_3(modified_df(), input$var1, input$var2, input$var3))
-    }, error = function(e) {
-      paste("Erro ao gerar tabela cruzada:", conditionMessage(e))
-    })
-  })
-  
-  
-  rel_modelo_summary <- reactive({
-    req(input$resp_var, input$pred_vars)
-    capture.output({
-      if(length(unique(modified_df()[[input$resp_var]])) != 2)
-        stop("Variável resposta não é binária.")
-      modelo <- glm(reformulate(input$pred_vars, input$resp_var), 
-                    data = modified_df(), family = binomial)
-      summary(modelo)
-    })
-  })
-  
-  rel_modelo_metrics <- reactive({
-    req(input$resp_var, input$pred_vars)
-    capture.output({
-      modelo <- glm(reformulate(input$pred_vars, input$resp_var), 
-                    data = modified_df(), family = binomial)
-      avaliar_modelo_logistico(modelo, modified_df(), input$resp_var)
-    })
-  })
-  
-  rel_correlacao <- reactive({
-    req(input$cor_vars)
-    capture.output(visualizar_correlacao(modified_df(), input$cor_vars))
-  })
-  
-  rel_ratios_vif <- reactive({
-    req(modified_df())
-    capture.output({
-      res <- analise_ratios_vif(modified_df())
-      if(!is.null(res)){
-        cat("### Ratios:\n")
-        print(summary(res$modified_df$col_hdl_ratio))
-        print(summary(res$modified_df$ldl_hdl_ratio))
-        print(summary(res$modified_df$trig_hdl_ratio))
-        cat("\n### VIF:\n")
-        print(res$vif)
-      }
-    })
-  })
-  
-  # Botão de download do relatório
-  output$download_report <- downloadHandler(
-    filename = function() {
-      paste("Relatorio_Analises_", Sys.Date(), ".html", sep = "")
-    },
+  # Dicionário
+  output$download_dict <- downloadHandler(
+    filename = "dicionario.html",
     content = function(file) {
-      tempReport <- file.path(tempdir(), "report_template.Rmd")
-      file.copy("report_template.Rmd", tempReport, overwrite = TRUE)
+      content <- capture.output(dicionario_variaveis(modified_df()))
+      writeLines(generate_html_report(content), file)
+    }
+  )
+  
+  # Frequências
+  output$download_freq <- downloadHandler(
+    filename = function() paste0("frequencias_", input$freq_var, ".html"),
+    content = function(file) {
+      tbl <- calcular_frequencias(modified_df(), input$freq_var)
+      plt <- plot_to_base64(function() calcular_frequencias(modified_df(), input$freq_var))
+      content <- capture.output(print(tbl))
+      writeLines(generate_html_report(content, list(plt)), file)
+    }
+  )
+  
+  # Análise Descritiva
+  output$download_desc <- downloadHandler(
+    filename = function() paste0("descritiva_", input$desc_var, ".html"),
+    content = function(file) {
+      res <- analise_descritiva_avancada(modified_df(), input$desc_var)
+      plt <- plot_to_base64(function() analise_descritiva_avancada(modified_df(), input$desc_var))
+      content <- capture.output(print(res$sumario))
+      writeLines(generate_html_report(content, list(plt)), file)
+    }
+  )
+  
+  # Análise Univariada
+  output$download_univariada <- downloadHandler(
+    filename = function() paste0("univariada_", input$var, ".html"),
+    content = function(file) {
+      if(is.numeric(modified_df()[[input$var]])) {
+        sumario <- analise_num(modified_df(), input$var)
+        plt <- plot_to_base64(function() {
+          par(mfrow = c(1,2))
+          hist(modified_df()[[input$var]], main = paste("Histograma -", input$var))
+          boxplot(modified_df()[[input$var]], main = paste("Boxplot -", input$var))
+        })
+      } else {
+        sumario <- analise_categ(modified_df(), input$var)
+        plt <- plot_to_base64(function() barplot(table(modified_df()[[input$var]])))
+      }
+      writeLines(generate_html_report(capture.output(sumario), list(plt)), file)
+    }
+  )
+  
+  # Modelos
+  output$download_modelo <- downloadHandler(
+    filename = "modelo_logistico.html",
+    content = function(file) {
+      sumario <- capture.output({
+        modelo <- glm(reformulate(input$pred_vars, input$resp_var), 
+                      data = modified_df(), family = binomial)
+        summary(modelo)
+      })
+      metricas <- capture.output(avaliar_modelo_logistico(modelo, modified_df(), input$resp_var))
+      writeLines(generate_html_report(c(sumario, metricas)), file)
+    }
+  )
+  
+  # Correlação
+  output$download_cor <- downloadHandler(
+    filename = "correlacao.html",
+    content = function(file) {
+      plt <- plot_to_base64(function() visualizar_correlacao(modified_df(), input$cor_vars))
+      matriz <- capture.output(cor(modified_df()[input$cor_vars], use = "complete.obs"))
+      writeLines(generate_html_report(matriz, list(plt)), file)
+    }
+  )
+  
+  # Tabela Cruzada
+  output$download_cruzada <- downloadHandler(
+    filename = "tabela_cruzada.html",
+    content = function(file) {
+      content <- capture.output({
+        tabela_cruzada_3(modified_df(), input$var1, input$var2, input$var3)
+      })
+      writeLines(generate_html_report(content), file)
+    }
+  )
+  
+  # Boxplot Multivariado
+  output$download_boxplot <- downloadHandler(
+    filename = function() paste0("boxplot_", input$box_y, ".html"),
+    content = function(file) {
+      plt <- plot_to_base64(function() {
+        boxplot_multivariado(modified_df(), input$box_y, input$box_x1, input$box_x2)
+      })
+      writeLines(generate_html_report(NULL, list(plt)), file)
+    }
+  )
+  
+  # Associação Categórica
+  output$download_assoc <- downloadHandler(
+    filename = function() paste0("associacao_", input$assoc1, "_", input$assoc2, ".html"),
+    content = function(file) {
+      content <- capture.output(
+        analise_associacao_categ(modified_df(), input$assoc1, input$assoc2)
+      )
+      plt <- plot_to_base64(function() {
+        tabela <- table(modified_df()[[input$assoc1]], modified_df()[[input$assoc2]])
+        barplot(tabela, beside = TRUE, col = rainbow(nrow(tabela)))
+      })
+      writeLines(generate_html_report(content, list(plt)), file)
+    }
+  )
+  
+  # MCA
+  output$download_mca <- downloadHandler(
+    filename = "analise_mca.html",
+    content = function(file) {
+      validate(need(length(input$mca_vars) >= 2, "Selecione pelo menos 2 variáveis"))
+      plt <- plot_to_base64(function() executar_mca(modified_df(), input$mca_vars))
+      content <- paste("Variáveis incluídas na MCA:", paste(input$mca_vars, collapse = ", "))
+      writeLines(generate_html_report(content, list(plt)), file)
+    }
+  )
+  
+  # Ratios e VIF
+  output$download_ratios <- downloadHandler(
+    filename = "ratios_vif.html",
+    content = function(file) {
+      res <- analise_ratios_vif(modified_df())
+      content <- capture.output({
+        cat("=== Ratios ===\n")
+        print(summary(res$df$col_hdl_ratio))
+        print(summary(res$df$ldl_hdl_ratio))
+        print(summary(res$df$trig_hdl_ratio))
+        cat("\n=== VIF ===\n")
+        print(res$vif)
+      })
       
-      params <- list(
-        dicionario = capture.output(dicionario_variaveis(modified_df())),
-        analise_univariada = capture.output(analise_num(modified_df(), input$var)),
-        # ... outros parâmetros ...
+      # Capturar os 3 histogramas
+      plots <- list(
+        plot_to_base64(function() hist(res$df$col_hdl_ratio, main = "COL/HDL")),
+        plot_to_base64(function() hist(res$df$ldl_hdl_ratio, main = "LDL/HDL")),
+        plot_to_base64(function() hist(res$df$trig_hdl_ratio, main = "TRIG/HDL"))
       )
       
-      rmarkdown::render(tempReport,
-                        output_file = file,
-                        params = params,
-                        envir = new.env(parent = globalenv()))
+      writeLines(generate_html_report(content, plots), file)
     }
   )
   
