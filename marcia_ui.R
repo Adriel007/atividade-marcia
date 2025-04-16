@@ -1,6 +1,6 @@
 # Lista de pacotes
 packages <- c("shiny", "glmnet", "corrplot", "ggcorrplot", "factoextra", 
-              "Matrix", "MatrixModels", "quantreg", "car", "FactoMineR")
+              "Matrix", "MatrixModels", "quantreg", "car", "FactoMineR", "rmarkdown")
 
 # Atualiza Matrix com dependências antes de tudo
 cat("Forçando atualização de 'Matrix'...\n")
@@ -37,6 +37,63 @@ cat("\nTodos os pacotes foram processados.\n")
 # =============================
 # Funções Gerais e Módulos
 # =============================
+
+# -----------
+# Módulo: Converter variáveis para Factor
+# -----------
+
+converter_para_factor <- function(df, vars) {
+  for (var in vars) {
+    if (!is.factor(df[[var]])) {
+      df[[var]] <- as.factor(df[[var]])
+      cat("Variável", var, "convertida para factor.\n")
+    }
+  }
+  return(df)
+}
+
+# ---------------------- MÓDULO: Análise de Ratios e VIF ----------------------
+
+analise_ratios_vif <- function(df) {
+  cat("-------------- Módulo: Análise de Ratios e VIF --------------\n")
+  
+  # Verifica se as colunas necessárias existem no dataset
+  required_cols <- c("COL", "HDL", "LDL", "TRIG", "GLIC", "IMC")
+  missing_cols <- setdiff(required_cols, names(df))
+  if(length(missing_cols) > 0) {
+    cat("As seguintes colunas estão faltando e são necessárias para o módulo:\n")
+    print(missing_cols)
+    return(NULL)
+  }
+  
+  # Cálculo dos ratios
+  df$col_hdl_ratio   <- with(df, COL / HDL)
+  df$ldl_hdl_ratio   <- with(df, LDL / HDL)
+  df$trig_hdl_ratio  <- with(df, TRIG / HDL)
+  
+  # Sumário dos ratios
+  cat("\nResumo do Ratio COL/HDL:\n")
+  print(summary(df$col_hdl_ratio))
+  
+  cat("\nResumo do Ratio LDL/HDL:\n")
+  print(summary(df$ldl_hdl_ratio))
+  
+  cat("\nResumo do Ratio TRIG/HDL:\n")
+  print(summary(df$trig_hdl_ratio))
+  
+  # Construção do modelo de regressão (utilizando IMC como resposta)
+  modelo <- lm(IMC ~ COL + HDL + LDL + TRIG + GLIC, data = df)
+  cat("\nResumo do Modelo de Regressão (IMC ~ COL + HDL + LDL + TRIG + GLIC):\n")
+  print(summary(modelo))
+  
+  # Análise de multicolinearidade: Cálculo do VIF
+  cat("\nValores do VIF:\n")
+  vif_val <- vif(modelo)
+  print(vif_val)
+  
+  # Retorna uma lista contendo o dataframe modificado e o modelo
+  return(list(df = df, modelo = modelo, vif = vif_val))
+}
 
 # Função para construir o dicionário de variáveis
 dicionario_variaveis <- function(df) {
@@ -103,6 +160,16 @@ analise_dataset <- function(df) {
 
 # Tabela cruzada entre três variáveis categóricas
 tabela_cruzada_3 <- function(df, var1, var2, var3) {
+  total_niveis <- length(unique(df[[var1]])) *
+    length(unique(df[[var2]])) *
+    length(unique(df[[var3]]))
+  
+  if (total_niveis > 1000) {
+    cat("Muitas combinações possíveis (", total_niveis, 
+        "). Tabela cruzada não gerada.\n")
+    return(NULL)
+  }
+  
   tbl <- ftable(df[[var1]], df[[var2]], df[[var3]])
   print(tbl)
   print(prop.table(tbl))
@@ -225,6 +292,41 @@ preparar_dados_regularizacao <- function(base, resposta) {
   list(x = x, y = y)
 }
 
+# -----------
+# Módulo: Frequências Absolutas e Relativas
+# -----------
+
+calcular_frequencias <- function(df, var) {
+
+  if (is.numeric(df[[var]])) {
+    # Para variáveis quantitativas: categoriza em 5 intervalos
+    categorias <- cut(df[[var]], breaks = 5, include.lowest = TRUE)
+    tab <- table(categorias)
+  } else {
+    # Para qualitativas
+    tab <- table(df[[var]], useNA = "ifany")
+  }
+  
+  freq_abs <- tab
+  freq_rel <- round(prop.table(tab) * 100, 2)
+  
+  result <- data.frame(
+    Categoria = names(freq_abs),
+    Frequência_Absoluta = as.numeric(freq_abs),
+    Frequência_Relativa = as.numeric(freq_rel)
+  )
+  
+
+  # Gráfico
+  if (is.numeric(df[[var]])) {
+    barplot(tab, main = paste("Distribuição (Categorizada) -", var), col = "lightblue")
+  } else {
+    barplot(tab, main = paste("Distribuição -", var), col = "salmon")
+  }
+  
+  return(result)
+}
+
 # =============================
 # App Shiny
 # =============================
@@ -234,6 +336,9 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       fileInput("file", "Carregar Dataset (CSV)", accept = ".csv"),
+      checkboxGroupInput("vars_to_factor", "Variáveis Numéricas para Converter em Fator",
+                         choices = NULL),
+      actionButton("btn_convert", "Converter para Factor"),
       selectInput("var", "Selecionar Variável para Análise", choices = NULL),
       selectInput("var1", "Variável 1 (Tabela Cruzada)", choices = NULL),
       selectInput("var2", "Variável 2 (Tabela Cruzada)", choices = NULL),
@@ -241,6 +346,10 @@ ui <- fluidPage(
     ),
     mainPanel(
       tabsetPanel(
+        tabPanel("Frequências",
+                 selectInput("freq_var", "Selecionar Variável", choices = NULL),
+                 verbatimTextOutput("freq_table"),
+                 plotOutput("freq_plot")),
         tabPanel("Dicionário", tableOutput("dicionario")),
         tabPanel("Análise Univariada",
                  verbatimTextOutput("analise_univariada"),
@@ -265,56 +374,114 @@ ui <- fluidPage(
                  verbatimTextOutput("assoc_result")),
         tabPanel("MCA",
                  uiOutput("mca_vars_ui"),
-                 plotOutput("mca_plot"))
-      )
+                 plotOutput("mca_plot")),
+        tabPanel("Ratios e VIF",
+                 verbatimTextOutput("ratios_vif_text"),
+                 fluidRow(
+                   column(4, plotOutput("hist_col_hdl")),
+                   column(4, plotOutput("hist_ldl_hdl")),
+                   column(4, plotOutput("hist_trig_hdl"))
+                 )
+        )
+        
+        
+        
+      ),
+      downloadButton("download_report", "Download Relatório Consolidado")
     )
   )
 )
 
 server <- function(input, output, session) {
   
-  # Carregar dados
-  df <- reactive({
+  # Reactive value para armazenar dados modificados
+  modified_df <- reactiveVal()
+  
+  # Carregar dados originais (sem conversão automática para fatores)
+  df_original <- reactive({
     req(input$file)
-    data <- read.csv(input$file$datapath, stringsAsFactors = TRUE) # Converter strings em fatores
-    return(data)
+    read.csv(input$file$datapath, stringsAsFactors = FALSE)
+  })
+  
+  # Inicializar modified_df com dados originais
+  observe({
+    modified_df(df_original())
   })
   
   # Atualizar seleções de variáveis
-  observeEvent(df(), {
-    cols <- names(df())
+  observeEvent(modified_df(), {
+    df <- modified_df()
+    cols <- names(df)
+    
+    # Atualizar todas as seleções
     updateSelectInput(session, "var", choices = cols)
-    updateSelectInput(session, "resp_var", choices = cols[!sapply(df(), is.numeric)]) # Variáveis categóricas como resposta
-    updateSelectInput(session, "pred_vars", choices = cols[sapply(df(), is.numeric)]) # Variáveis numéricas como preditoras
-    updateSelectInput(session, "var1", choices = cols)
-    updateSelectInput(session, "var2", choices = cols)
-    updateSelectInput(session, "var3", choices = cols)
+    updateSelectInput(session, "resp_var", choices = cols[!sapply(df, is.numeric)])
+    updateSelectInput(session, "pred_vars", choices = cols[sapply(df, is.numeric)])
+    updateCheckboxGroupInput(session, "vars_to_factor",
+                             choices = names(df)[sapply(df, is.numeric)])
+    updateSelectInput(session, "freq_var", choices = cols)
+    updateSelectInput(session, "var1", choices = names(df)[sapply(df, is.factor)])
+    updateSelectInput(session, "var2", choices = names(df)[sapply(df, is.factor)])
+    updateSelectInput(session, "var3", choices = names(df)[sapply(df, is.factor)])
     updateSelectInput(session, "box_y", choices = cols)
     updateSelectInput(session, "box_x1", choices = cols)
     updateSelectInput(session, "box_x2", choices = cols)
     updateSelectInput(session, "assoc1", choices = cols)
     updateSelectInput(session, "assoc2", choices = cols)
-    updateSelectInput(session, "mca_vars", choices = names(df())[sapply(df(), is.factor)])
+  })
+  
+  # Converter variáveis para factor
+  observeEvent(input$btn_convert, {
+    req(modified_df(), input$vars_to_factor)
+    df <- modified_df()
+    df <- converter_para_factor(df, input$vars_to_factor)
+    modified_df(df)
+    showNotification("Variáveis convertidas para factor!", type = "message")
+  })
+  
+  # ========== Novo Módulo: Frequências ==========
+  output$freq_table <- renderPrint({
+    req(modified_df(), input$freq_var)
+    calcular_frequencias(modified_df(), input$freq_var)
+  })
+  
+  output$freq_plot <- renderPlot({
+    req(modified_df(), input$freq_var)
+    calcular_frequencias(modified_df(), input$freq_var)
+  })
+  
+  # ========== Módulos Existente Atualizados ==========
+  output$dicionario <- renderTable({
+    dicionario_variaveis(modified_df())
+  })
+  
+  output$analise_univariada <- renderPrint({
+    req(input$var)
+    if(is.numeric(modified_df()[[input$var]])) {
+      analise_num(modified_df(), input$var)
+    } else {
+      analise_categ(modified_df(), input$var)
+    }
   })
   
   # Dicionário de variáveis
   output$dicionario <- renderTable({
-    dicionario_variaveis(df())
+    dicionario_variaveis(modified_df())
   })
   
   # Análise univariada
   output$analise_univariada <- renderPrint({
     req(input$var)
-    if(is.numeric(df()[[input$var]])) {
-      analise_num(df(), input$var)
+    if(is.numeric(modified_df()[[input$var]])) {
+      analise_num(modified_df(), input$var)
     } else {
-      analise_categ(df(), input$var)
+      analise_categ(modified_df(), input$var)
     }
   })
   
   output$grafico_univariado <- renderPlot({
     req(input$var)
-    var <- df()[[input$var]]
+    var <- modified_df()[[input$var]]
     if(is.numeric(var)) {
       par(mfrow = c(1,2))
       hist(var, main = paste("Histograma -", input$var), col = "lightgreen")
@@ -327,14 +494,14 @@ server <- function(input, output, session) {
   # Tabela cruzada entre três variáveis
   output$tabela_cruzada <- renderPrint({
     req(input$var1, input$var2, input$var3)
-    tabela_cruzada_3(df(), input$var1, input$var2, input$var3)
+    tabela_cruzada_3(modified_df(), input$var1, input$var2, input$var3)
   })
   
   output$modelo_summary <- renderPrint({
     req(input$resp_var, input$pred_vars)
     
     # Verificar resposta binária
-    if (length(unique(df()[[input$resp_var]])) != 2) {
+    if (length(unique(modified_df()[[input$resp_var]])) != 2) {
       stop("Variável resposta não é binária.")
     }
     
@@ -342,7 +509,7 @@ server <- function(input, output, session) {
     formula <- reformulate(input$pred_vars, input$resp_var)
     
     # Ajustar modelo
-    modelo <- glm(formula, data = df(), family = binomial)
+    modelo <- glm(formula, data = modified_df(), family = binomial)
     
     # Retornar sumário
     summary(modelo)
@@ -351,44 +518,184 @@ server <- function(input, output, session) {
   output$modelo_metrics <- renderPrint({
     req(input$resp_var, input$pred_vars)
     modelo <- glm(reformulate(input$pred_vars, input$resp_var), 
-                  data = df(), family = binomial)
-    avaliar_modelo_logistico(modelo, df(), input$resp_var)
+                  data = modified_df(), family = binomial)
+    avaliar_modelo_logistico(modelo, modified_df(), input$resp_var)
   })
   
   
   # Correlação
   output$cor_vars_ui <- renderUI({
-    req(df())
-    checkboxGroupInput("cor_vars", "Selecionar Variáveis Numéricas", choices = names(df()))
+    req(modified_df())
+    checkboxGroupInput("cor_vars", "Selecionar Variáveis Numéricas", choices = names(modified_df()))
   })
   
   output$cor_plot1 <- renderPlot({
     req(input$cor_vars)
-    visualizar_correlacao(df(), input$cor_vars)
+    visualizar_correlacao(modified_df(), input$cor_vars)
   })
   
   # Boxplot Multivariado
   output$boxplot_multi <- renderPlot({
     req(input$box_y, input$box_x1, input$box_x2)
-    boxplot_multivariado(df(), input$box_y, input$box_x1, input$box_x2)
+    boxplot_multivariado(modified_df(), input$box_y, input$box_x1, input$box_x2)
   })
   
   # Associação entre Variáveis Categóricas
   output$assoc_result <- renderPrint({
     req(input$assoc1, input$assoc2)
-    analise_associacao_categ(df(), input$assoc1, input$assoc2)
+    analise_associacao_categ(modified_df(), input$assoc1, input$assoc2)
   })
   
   # MCA
   output$mca_vars_ui <- renderUI({
-    req(df())
-    checkboxGroupInput("mca_vars", "Selecionar Variáveis Categóricas para MCA", choices = names(df()))
+    req(modified_df())
+    checkboxGroupInput("mca_vars", "Selecionar Variáveis Categóricas para MCA", choices = names(modified_df()))
   })
   
   output$mca_plot <- renderPlot({
     req(input$mca_vars)
-    executar_mca(df(), input$mca_vars)
+    executar_mca(modified_df(), input$mca_vars)
   })
+  
+  # Módulo: Análise de Ratios e VIF
+  output$ratios_vif_text <- renderPrint({
+    req(modified_df())
+    res <- analise_ratios_vif(modified_df())
+    if(is.null(res)) {
+      cat("O módulo não pôde ser executado devido à ausência de alguma coluna necessária.")
+    } else {
+      cat("---- Sumários dos Ratios e VIF ----\n")
+      cat("\n>>> Ratio COL/HDL:\n")
+      print(summary(res$modified_df$col_hdl_ratio))
+      
+      cat("\n>>> Ratio LDL/HDL:\n")
+      print(summary(res$modified_df$ldl_hdl_ratio))
+      
+      cat("\n>>> Ratio TRIG/HDL:\n")
+      print(summary(res$modified_df$trig_hdl_ratio))
+      
+      cat("\n>>> VIF:\n")
+      print(res$vif)
+    }
+  })
+  
+  # Histograma do Ratio COL/HDL
+  output$hist_col_hdl <- renderPlot({
+    req(modified_df())
+    # Execute o módulo para garantir que a coluna foi calculada
+    res <- analise_ratios_vif(modified_df())
+    if(!is.null(res)) {
+      hist(res$modified_df$col_hdl_ratio, main = "Histograma: COL/HDL",
+           xlab = "COL/HDL", col = "skyblue", border = "white")
+    }
+  })
+  
+  # Histograma do Ratio LDL/HDL
+  output$hist_ldl_hdl <- renderPlot({
+    req(modified_df())
+    res <- analise_ratios_vif(modified_df())
+    if(!is.null(res)) {
+      hist(res$modified_df$ldl_hdl_ratio, main = "Histograma: LDL/HDL",
+           xlab = "LDL/HDL", col = "salmon", border = "white")
+    }
+  })
+  
+  # Histograma do Ratio TRIG/HDL
+  output$hist_trig_hdl <- renderPlot({
+    req(modified_df())
+    res <- analise_ratios_vif(modified_df())
+    if(!is.null(res)) {
+      hist(res$modified_df$trig_hdl_ratio, main = "Histograma: TRIG/HDL",
+           xlab = "TRIG/HDL", col = "orange", border = "white")
+    }
+  })
+  
+  rel_dicionario <- reactive({
+    capture.output(dicionario_variaveis(modified_df()))
+  })
+  
+  rel_analise_univariada <- reactive({
+    req(input$var)
+    capture.output({
+      if(is.numeric(modified_df()[[input$var]])) {
+        analise_num(modified_df(), input$var)
+      } else {
+        analise_categ(modified_df(), input$var)
+      }
+    })
+  })
+  
+  rel_tabela_cruzada <- reactive({
+    req(input$var1, input$var2, input$var3)
+    tryCatch({
+      capture.output(tabela_cruzada_3(modified_df(), input$var1, input$var2, input$var3))
+    }, error = function(e) {
+      paste("Erro ao gerar tabela cruzada:", conditionMessage(e))
+    })
+  })
+  
+  
+  rel_modelo_summary <- reactive({
+    req(input$resp_var, input$pred_vars)
+    capture.output({
+      if(length(unique(modified_df()[[input$resp_var]])) != 2)
+        stop("Variável resposta não é binária.")
+      modelo <- glm(reformulate(input$pred_vars, input$resp_var), 
+                    data = modified_df(), family = binomial)
+      summary(modelo)
+    })
+  })
+  
+  rel_modelo_metrics <- reactive({
+    req(input$resp_var, input$pred_vars)
+    capture.output({
+      modelo <- glm(reformulate(input$pred_vars, input$resp_var), 
+                    data = modified_df(), family = binomial)
+      avaliar_modelo_logistico(modelo, modified_df(), input$resp_var)
+    })
+  })
+  
+  rel_correlacao <- reactive({
+    req(input$cor_vars)
+    capture.output(visualizar_correlacao(modified_df(), input$cor_vars))
+  })
+  
+  rel_ratios_vif <- reactive({
+    req(modified_df())
+    capture.output({
+      res <- analise_ratios_vif(modified_df())
+      if(!is.null(res)){
+        cat("### Ratios:\n")
+        print(summary(res$modified_df$col_hdl_ratio))
+        print(summary(res$modified_df$ldl_hdl_ratio))
+        print(summary(res$modified_df$trig_hdl_ratio))
+        cat("\n### VIF:\n")
+        print(res$vif)
+      }
+    })
+  })
+  
+  # Botão de download do relatório
+  output$download_report <- downloadHandler(
+    filename = function() {
+      paste("Relatorio_Analises_", Sys.Date(), ".html", sep = "")
+    },
+    content = function(file) {
+      tempReport <- file.path(tempdir(), "report_template.Rmd")
+      file.copy("report_template.Rmd", tempReport, overwrite = TRUE)
+      
+      params <- list(
+        dicionario = capture.output(dicionario_variaveis(modified_df())),
+        analise_univariada = capture.output(analise_num(modified_df(), input$var)),
+        # ... outros parâmetros ...
+      )
+      
+      rmarkdown::render(tempReport,
+                        output_file = file,
+                        params = params,
+                        envir = new.env(parent = globalenv()))
+    }
+  )
   
 }
 
